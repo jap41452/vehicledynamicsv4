@@ -95,8 +95,8 @@
       <div class="impact-section">
         <h3>Contact Stiffness <span class="impact-badge">CRITICAL</span></h3>
         <div class="grid2">
-          <label>Guard Rail K <span class="units">lb/in</span><input id="k_rail" type="number" value="5000"></label>
-          <label>Bumper K <span class="units">lb/in</span><input id="k_bumper" type="number" value="3000"></label>
+          <label>Guard Rail K <span class="units">lb/in</span><input id="k_rail" type="number" value="3000"></label>
+          <label>Bumper K <span class="units">lb/in</span><input id="k_bumper" type="number" value="2000"></label>
         </div>
         <div style="font-size: 10px; color: #d84315; margin-top: 6px; line-height: 1.4;">
           Damping automatically calculated for critical damping (ζ=1.0). Higher stiffness = harder impact, better numerical stability.
@@ -158,7 +158,7 @@ let isRunning = false;
 let chartInstance = null;
 const maxDataPoints = 200; 
 let chartUpdateCounter = 0;
-const dt = 1/120; 
+const dt = 1/240; // Smaller timestep for impact stability 
 
 const state = {
   x: 0,
@@ -409,13 +409,30 @@ function buildVehicle(isAutoUpdate = false) {
     vehicleGroup.add(mesh);
   });
   
-  if(!isAutoUpdate || simTime === 0) {
-    state.x = 0;
-    state.z = CG.z + 10; 
-    state.phi = 0; state.theta = 0; state.psi = 0;
-    state.dx = 0; state.dz = 0; state.dphi = 0; state.dtheta = 0; state.dpsi = 0;
-    state.zw.FL = state.zw.FR = state.zw.RL = state.zw.RR = CG.z;
-  }
+  // ALWAYS reset initial conditions when buildVehicle is called
+  state.x = 0;
+  state.z = CG.z + 10; 
+  state.phi = 0; 
+  state.theta = 0; 
+  state.psi = 0;
+  state.dx = 0; 
+  state.dz = 0; 
+  state.dphi = 0; 
+  state.dtheta = 0; 
+  state.dpsi = 0;
+  state.zw.FL = CG.z;
+  state.zw.FR = CG.z;
+  state.zw.RL = CG.z;
+  state.zw.RR = CG.z;
+  state.dzw.FL = 0;
+  state.dzw.FR = 0;
+  state.dzw.RL = 0;
+  state.dzw.RR = 0;
+  state.ddz = 0;
+  state.ddphi = 0;
+  state.ddtheta = 0;
+  state.ddx = 0;
+  state.ddpsi = 0;
   
   buildGuardRail();
 }
@@ -521,9 +538,11 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
   const g = getVal('veh_g');
   
   // Critical damping: c = 2 * sqrt(k * m)
-  // Use average stiffness and vehicle mass
   const k_avg = (k_rail + k_bumper) / 2;
   const c_critical = 2 * Math.sqrt(k_avg * massProps.M);
+  
+  // Maximum penetration allowed (prevents numerical instability)
+  const MAX_PENETRATION = 5.0; // inches
   
   const cosPsi = Math.cos(psi);
   const sinPsi = Math.sin(psi);
@@ -531,39 +550,42 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
   let Fx_total = 0, Fy_total = 0, Tz_total = 0;
   
   if(guardRail.type === 'head_on') {
-    // Head-on barrier: Check if any corner crossed the Y threshold
     for(let corner of vehicleCorners) {
       const cx_world = x + cosPsi * corner.x - sinPsi * corner.y;
       const cy_world = y + sinPsi * corner.x + cosPsi * corner.y;
       
-      const penetration = cy_world - guardRail.y;
+      let penetration = cy_world - guardRail.y;
       
       if(penetration > 0) {
-        // Corner has crossed the barrier
+        // Limit penetration to prevent instability
+        penetration = Math.min(penetration, MAX_PENETRATION);
+        
         // Velocity of corner in world frame
         const vx_corner = dx - dpsi * corner.y;
         const vy_corner = dy + dpsi * corner.x;
         
-        // Normal velocity (into barrier, Y direction)
+        // Normal velocity (into barrier)
         const v_normal = vy_corner;
         
-        // Contact force (critically damped)
+        // Contact force with limits
         const F_spring = k_rail * penetration;
         const F_damp = c_critical * v_normal;
-        const F_contact = F_spring + F_damp;
+        let F_contact = F_spring + F_damp;
         
-        // Force in -Y direction (opposes motion)
+        // Cap maximum force to prevent instability
+        const MAX_FORCE = massProps.M * g * 50; // 50 G's max
+        F_contact = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, F_contact));
+        
+        // Force in -Y direction
         const Fy = -Math.abs(F_contact);
         
         Fy_total += Fy;
-        
-        // Moment from force at corner
-        Tz_total += -corner.x * Fy; // Cross product: rx*Fy
+        Tz_total += -corner.x * Fy;
       }
     }
     
   } else {
-    // Angled rail: Check perpendicular distance from line
+    // Angled rail
     for(let corner of vehicleCorners) {
       const cx_world = x + cosPsi * corner.x - sinPsi * corner.y;
       const cy_world = y + sinPsi * corner.x + cosPsi * corner.y;
@@ -572,38 +594,42 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
       const dx_corner = cx_world - guardRail.x1;
       const dy_corner = cy_world - guardRail.y1;
       
-      // Project onto rail direction to check if within segment
+      // Project onto rail direction
       const projection = dx_corner * guardRail.dirX + dy_corner * guardRail.dirY;
       
-      // Only check if corner is within rail length
+      // Check if within rail length
       if(projection >= 0 && projection <= guardRail.length) {
-        // Perpendicular distance (signed, positive = penetration)
+        // Perpendicular distance
         const perpDist = dx_corner * guardRail.normalX + dy_corner * guardRail.normalY;
         
         if(perpDist < 0) {
-          // Corner has crossed to wrong side of rail
-          const penetration = -perpDist;
+          let penetration = -perpDist;
+          
+          // Limit penetration
+          penetration = Math.min(penetration, MAX_PENETRATION);
           
           // Corner velocity
           const vx_corner = dx - dpsi * corner.y;
           const vy_corner = dy + dpsi * corner.x;
           
-          // Normal velocity component
+          // Normal velocity
           const v_normal = vx_corner * guardRail.normalX + vy_corner * guardRail.normalY;
           
           // Contact force
           const F_spring = k_bumper * penetration;
           const F_damp = c_critical * v_normal;
-          const F_contact = F_spring + F_damp;
+          let F_contact = F_spring + F_damp;
           
-          // Force in normal direction
+          // Cap force
+          const MAX_FORCE = massProps.M * g * 50;
+          F_contact = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, F_contact));
+          
+          // Force components
           const Fx = guardRail.normalX * F_contact;
           const Fy = guardRail.normalY * F_contact;
           
           Fx_total += Fx;
           Fy_total += Fy;
-          
-          // Moment
           Tz_total += corner.x * Fy - corner.y * Fx;
         }
       }
