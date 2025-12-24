@@ -86,9 +86,13 @@
           </label>
           <label>Location Y <span class="units">in</span><input id="rail_y" type="number" value="300"></label>
           <label>Angle <span class="units">deg</span><input id="rail_angle" type="number" value="45" min="0" max="90"></label>
+          <label>Height <span class="units">in</span><input id="rail_height" type="number" value="36" min="12" max="72"></label>
+          <label style="background: #ffe0b2; padding: 4px; border-radius: 3px;">
+            CG Height: <span id="cg_height_display" style="font-weight: bold; color: #d84315;">--</span> <span class="units">in</span>
+          </label>
         </div>
         <div style="font-size: 10px; color: #d84315; margin-top: 6px; line-height: 1.4;">
-          Angle: 0°=parallel to road, 90°=perpendicular. Head-on uses full width barrier. Corner rails extend from selected side at specified angle. Height fixed at 36".
+          Angle: 0°=parallel to road, 90°=perpendicular. CG above rail height → vehicle may topple over. CG below rail height → contact forces apply.
         </div>
       </div>
       
@@ -100,6 +104,17 @@
         </div>
         <div style="font-size: 10px; color: #d84315; margin-top: 6px; line-height: 1.4;">
           Damping automatically calculated for critical damping (ζ=1.0). Higher stiffness = harder impact, better numerical stability.
+        </div>
+      </div>
+      
+      <div class="impact-section">
+        <h3>Break Loads <span class="impact-badge">FAILURE</span></h3>
+        <div class="grid2">
+          <label>Rail Break Load <span class="units">lb</span><input id="rail_break" type="number" value="50000"></label>
+          <label>Vehicle Break Load <span class="units">lb</span><input id="veh_break" type="number" value="30000"></label>
+        </div>
+        <div style="font-size: 10px; color: #d84315; margin-top: 6px; line-height: 1.4;">
+          Maximum force before failure. If contact force exceeds limit, that component "breaks" and force drops to zero. Rail break = barrier fails. Vehicle break = bumper/structure fails.
         </div>
       </div>
       
@@ -331,6 +346,7 @@ function setupAutoUpdate() {
   document.getElementById('rail_type').addEventListener('change', buildGuardRail);
   document.getElementById('rail_y').addEventListener('input', buildGuardRail);
   document.getElementById('rail_angle').addEventListener('input', buildGuardRail);
+  document.getElementById('rail_height').addEventListener('input', buildGuardRail);
 }
 
 document.getElementById('solveBtn').onclick = () => { isRunning = true; };
@@ -365,6 +381,9 @@ function buildVehicle(isAutoUpdate = false) {
     y: (m1*c1.y + m2*c2.y) / M,
     z: (m1*c1.z + m2*c2.z) / M
   };
+  
+  // Display CG height to user
+  document.getElementById('cg_height_display').textContent = CG.z.toFixed(1);
   
   const Ixx = (m1/12)*(L1*L1 + H1*H1) + m1*((c1.y-CG.y)**2 + (c1.z-CG.z)**2) + 
               (m2/12)*(L2*L2 + H2*H2) + m2*((c2.y-CG.y)**2 + (c2.z-CG.z)**2);
@@ -447,7 +466,7 @@ function buildGuardRail() {
   const railY = getVal('rail_y');
   const angleDeg = getVal('rail_angle');
   const angleRad = angleDeg * Math.PI / 180;
-  const railHeight = 36; // Fixed at 36 inches
+  const railHeight = getVal('rail_height'); // User-specified height
   const W = getVal('box1_W');
   
   // Guard rail geometry definition
@@ -467,12 +486,12 @@ function buildGuardRail() {
     groundGroup.add(mesh);
     
     // Store rail definition for collision detection
-    // Head-on: infinite line perpendicular to Y at railY
     guardRail = {
       type: 'head_on',
       mesh: mesh,
       y: railY,
-      normal: { x: 0, y: -1 } // Points backward (opposes vehicle)
+      height: railHeight,
+      normal: { x: 0, y: -1 }
     };
     
   } else {
@@ -481,7 +500,7 @@ function buildGuardRail() {
     const xStart = isLeft ? -W*0.6 : W*0.6;
     
     // Rail extends from corner at specified angle
-    const railLength = 400; // Long enough to catch vehicle
+    const railLength = 400;
     const xEnd = xStart + railLength * Math.sin(angleRad) * (isLeft ? -1 : 1);
     const yEnd = railY + railLength * Math.cos(angleRad);
     
@@ -504,13 +523,12 @@ function buildGuardRail() {
     groundGroup.add(mesh);
     
     // Store rail definition as line segment
-    // Normal vector perpendicular to rail (points toward vehicle side)
     const dx = xEnd - xStart;
     const dy = yEnd - railY;
     const length = Math.sqrt(dx*dx + dy*dy);
     const dirX = dx / length;
     const dirY = dy / length;
-    const normalX = -dirY * (isLeft ? -1 : 1); // Perpendicular, pointing inward
+    const normalX = -dirY * (isLeft ? -1 : 1);
     const normalY = dirX * (isLeft ? -1 : 1);
     
     guardRail = {
@@ -520,6 +538,7 @@ function buildGuardRail() {
       y1: railY,
       x2: xEnd,
       y2: yEnd,
+      height: railHeight,
       dirX: dirX,
       dirY: dirY,
       normalX: normalX,
