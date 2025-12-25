@@ -550,11 +550,12 @@ function buildGuardRail() {
 
 // Calculate guard rail collision forces
 function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
-  if(!guardRail || !vehicleCorners || !massProps) return { Fx: 0, Fy: 0, Tz: 0 };
+  if(!guardRail || !vehicleCorners || !massProps || !wheelOffsets) return { Fx: 0, Fy: 0, Tz: 0 };
   
   const k_rail = getVal('k_rail');
   const k_bumper = getVal('k_bumper');
   const g = getVal('veh_g');
+  const railHeight = guardRail.height;
   
   // Critical damping: c = 2 * sqrt(k * m)
   const k_avg = (k_rail + k_bumper) / 2;
@@ -566,60 +567,198 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
   const cosPsi = Math.cos(psi);
   const sinPsi = Math.sin(psi);
   
+  // Get break loads
+  const railBreakLoad = getVal('rail_break');
+  const vehBreakLoad = getVal('veh_break');
+  
   let Fx_total = 0, Fy_total = 0, Tz_total = 0;
   
+  // Define vehicle geometry
+  const L1 = getVal('box1_L');
+  const W1 = getVal('box1_W');
+  const H1 = getVal('box1_H');
+  const R = getVal('wheel_D') / 2;
+  
+  // Height ranges
+  const wheelBottom = 0; // Ground level
+  const wheelTop = 2 * R; // Top of wheel
+  const chassisBottom = R;
+  const chassisTop = R + H1;
+  
+  // Check if rail intersects with wheels (below chassis)
+  if(railHeight <= wheelTop && railHeight > wheelBottom) {
+    // WHEEL COLLISION - Rail hits wheels
+    for(let wOff of wheelOffsets) {
+      if(guardRail.type === 'head_on') {
+        // Transform wheel position to world
+        const wx_world = x + cosPsi * wOff.x - sinPsi * wOff.y;
+        const wy_world = y + sinPsi * wOff.x + cosPsi * wOff.y;
+        
+        let penetration = wy_world - guardRail.y;
+        
+        if(penetration > 0 && penetration < R) {
+          penetration = Math.min(penetration, MAX_PENETRATION);
+          
+          // Wheel velocity
+          const vx_wheel = dx - dpsi * wOff.y;
+          const vy_wheel = dy + dpsi * wOff.x;
+          const v_normal = vy_wheel;
+          
+          // Contact force
+          const F_spring = k_rail * penetration;
+          const F_damp = c_critical * v_normal;
+          let F_contact = F_spring + F_damp;
+          
+          // Check break loads
+          if(Math.abs(F_contact) > railBreakLoad || Math.abs(F_contact) > vehBreakLoad) {
+            F_contact = 0;
+          }
+          
+          const MAX_FORCE = massProps.M * g * 50;
+          F_contact = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, F_contact));
+          
+          const Fy = -Math.abs(F_contact);
+          Fy_total += Fy;
+          Tz_total += -wOff.x * Fy;
+          
+          // Vertical force component (wheel hops over)
+          const Fz_wheel = F_contact * (railHeight / wheelTop); // Ramp force
+          // This would need to be added to wheel vertical dynamics
+        }
+      } else {
+        // Angled rail - wheel collision
+        const wx_world = x + cosPsi * wOff.x - sinPsi * wOff.y;
+        const wy_world = y + sinPsi * wOff.x + cosPsi * wOff.y;
+        
+        const dx_wheel = wx_world - guardRail.x1;
+        const dy_wheel = wy_world - guardRail.y1;
+        
+        const projection = dx_wheel * guardRail.dirX + dy_wheel * guardRail.dirY;
+        
+        if(projection >= 0 && projection <= guardRail.length) {
+          const perpDist = dx_wheel * guardRail.normalX + dy_wheel * guardRail.normalY;
+          
+          if(perpDist < 0 && Math.abs(perpDist) < R) {
+            let penetration = -perpDist;
+            penetration = Math.min(penetration, MAX_PENETRATION);
+            
+            const vx_wheel = dx - dpsi * wOff.y;
+            const vy_wheel = dy + dpsi * wOff.x;
+            const v_normal = vx_wheel * guardRail.normalX + vy_wheel * guardRail.normalY;
+            
+            const F_spring = k_bumper * penetration;
+            const F_damp = c_critical * v_normal;
+            let F_contact = F_spring + F_damp;
+            
+            if(Math.abs(F_contact) > railBreakLoad || Math.abs(F_contact) > vehBreakLoad) {
+              F_contact = 0;
+            }
+            
+            const MAX_FORCE = massProps.M * g * 50;
+            F_contact = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, F_contact));
+            
+            const Fx = guardRail.normalX * F_contact;
+            const Fy = guardRail.normalY * F_contact;
+            
+            Fx_total += Fx;
+            Fy_total += Fy;
+            Tz_total += wOff.x * Fy - wOff.y * Fx;
+          }
+        }
+      }
+    }
+    
+    // Early return - wheels handle the collision
+    return { Fx: Fx_total, Fy: Fy_total, Tz: Tz_total };
+  }
+  
+  // Check if rail intersects with chassis
+  if(railHeight < chassisBottom || railHeight > chassisTop) {
+    // Rail is above chassis or below wheels - no contact
+    return { Fx: 0, Fy: 0, Tz: 0 };
+  }
+  
+  // CHASSIS COLLISION - Rail hits chassis body
+  // Contact points on front and rear edges at rail height
+  // Z-coordinate in local frame (relative to CG)
+  const contactZ_local = railHeight - massProps.CG.z;
+  
+  // Define contact points on the vehicle perimeter at rail height
+  const contactPoints = [
+    { name: 'FL', x: -W1/2 - massProps.CG.x, y: L1/2 - massProps.CG.y, z: contactZ_local },
+    { name: 'FR', x: W1/2 - massProps.CG.x, y: L1/2 - massProps.CG.y, z: contactZ_local },
+    { name: 'RL', x: -W1/2 - massProps.CG.x, y: -L1/2 - massProps.CG.y, z: contactZ_local },
+    { name: 'RR', x: W1/2 - massProps.CG.x, y: -L1/2 - massProps.CG.y, z: contactZ_local }
+  ];
+  
   if(guardRail.type === 'head_on') {
-    for(let corner of vehicleCorners) {
-      const cx_world = x + cosPsi * corner.x - sinPsi * corner.y;
-      const cy_world = y + sinPsi * corner.x + cosPsi * corner.y;
+    for(let pt of contactPoints) {
+      // Transform contact point to world coordinates
+      const cx_world = x + cosPsi * pt.x - sinPsi * pt.y;
+      const cy_world = y + sinPsi * pt.x + cosPsi * pt.y;
       
       let penetration = cy_world - guardRail.y;
       
       if(penetration > 0) {
-        // Limit penetration to prevent instability
+        // Limit penetration
         penetration = Math.min(penetration, MAX_PENETRATION);
         
-        // Velocity of corner in world frame
-        const vx_corner = dx - dpsi * corner.y;
-        const vy_corner = dy + dpsi * corner.x;
+        // Velocity of contact point
+        const vx_pt = dx - dpsi * pt.y;
+        const vy_pt = dy + dpsi * pt.x;
         
         // Normal velocity (into barrier)
-        const v_normal = vy_corner;
+        const v_normal = vy_pt;
         
         // Contact force with limits
         const F_spring = k_rail * penetration;
         const F_damp = c_critical * v_normal;
         let F_contact = F_spring + F_damp;
         
-        // Cap maximum force to prevent instability
-        const MAX_FORCE = massProps.M * g * 50; // 50 G's max
+        // Check break loads
+        const F_mag = Math.abs(F_contact);
+        if(F_mag > railBreakLoad) {
+          // Rail breaks - force drops to zero
+          F_contact = 0;
+        } else if(F_mag > vehBreakLoad) {
+          // Vehicle structure breaks - force drops to zero
+          F_contact = 0;
+        }
+        
+        // Cap maximum force
+        const MAX_FORCE = massProps.M * g * 50;
         F_contact = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, F_contact));
         
         // Force in -Y direction
         const Fy = -Math.abs(F_contact);
         
         Fy_total += Fy;
-        Tz_total += -corner.x * Fy;
+        
+        // Moment from force at contact point (including Z component)
+        // T = r × F
+        Tz_total += -pt.x * Fy; // Yaw moment
+        // Also creates pitch moment from force at height
+        // Tx = pt.z * Fy (but not implemented in current state vector)
       }
     }
     
   } else {
-    // Angled rail
-    for(let corner of vehicleCorners) {
-      const cx_world = x + cosPsi * corner.x - sinPsi * corner.y;
-      const cy_world = y + sinPsi * corner.x + cosPsi * corner.y;
+    // Angled rail - chassis collision
+    for(let pt of contactPoints) {
+      const cx_world = x + cosPsi * pt.x - sinPsi * pt.y;
+      const cy_world = y + sinPsi * pt.x + cosPsi * pt.y;
       
-      // Vector from rail start to corner
-      const dx_corner = cx_world - guardRail.x1;
-      const dy_corner = cy_world - guardRail.y1;
+      // Vector from rail start to contact point
+      const dx_pt = cx_world - guardRail.x1;
+      const dy_pt = cy_world - guardRail.y1;
       
       // Project onto rail direction
-      const projection = dx_corner * guardRail.dirX + dy_corner * guardRail.dirY;
+      const projection = dx_pt * guardRail.dirX + dy_pt * guardRail.dirY;
       
       // Check if within rail length
       if(projection >= 0 && projection <= guardRail.length) {
         // Perpendicular distance
-        const perpDist = dx_corner * guardRail.normalX + dy_corner * guardRail.normalY;
+        const perpDist = dx_pt * guardRail.normalX + dy_pt * guardRail.normalY;
         
         if(perpDist < 0) {
           let penetration = -perpDist;
@@ -627,17 +766,25 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
           // Limit penetration
           penetration = Math.min(penetration, MAX_PENETRATION);
           
-          // Corner velocity
-          const vx_corner = dx - dpsi * corner.y;
-          const vy_corner = dy + dpsi * corner.x;
+          // Contact point velocity
+          const vx_pt = dx - dpsi * pt.y;
+          const vy_pt = dy + dpsi * pt.x;
           
           // Normal velocity
-          const v_normal = vx_corner * guardRail.normalX + vy_corner * guardRail.normalY;
+          const v_normal = vx_pt * guardRail.normalX + vy_pt * guardRail.normalY;
           
           // Contact force
           const F_spring = k_bumper * penetration;
           const F_damp = c_critical * v_normal;
           let F_contact = F_spring + F_damp;
+          
+          // Check break loads
+          const F_mag = Math.abs(F_contact);
+          if(F_mag > railBreakLoad) {
+            F_contact = 0;
+          } else if(F_mag > vehBreakLoad) {
+            F_contact = 0;
+          }
           
           // Cap force
           const MAX_FORCE = massProps.M * g * 50;
@@ -649,7 +796,7 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
           
           Fx_total += Fx;
           Fy_total += Fy;
-          Tz_total += corner.x * Fy - corner.y * Fx;
+          Tz_total += pt.x * Fy - pt.y * Fx;
         }
       }
     }
