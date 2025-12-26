@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Guard Rail Impact - Accel Plots</title>
+<title>Guard Rail Impact - Impulse on Break</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -44,7 +44,7 @@
     <div id="ui">
       <div style="background: #fff3e0; padding: 10px; border-radius: 4px; margin-bottom: 15px; border: 2px solid #ff6b35;">
         <div style="font-size: 14px; font-weight: bold; color: #d84315;">Guard Rail Impact Module</div>
-        <div style="font-size: 10px; color: #d84315; margin-top: 4px;">Dynamic Breakage: Rail shears visually on failure</div>
+        <div style="font-size: 10px; color: #d84315; margin-top: 4px;">Now with Correct 'Snap' Physics on Breakage</div>
       </div>
       
       <div class="auto-update-group">
@@ -97,7 +97,6 @@
           <label>Rail Stiffness <span class="units">lb/in</span><input id="k_rail" type="number" value="3000"></label>
           <label>Bumper Stiffness <span class="units">lb/in</span><input id="k_bumper" type="number" value="2000"></label>
           <label>Rail Break Load <span class="units">lb</span><input id="rail_break" type="number" value="50000"></label>
-          <label>Vehicle Break Load <span class="units">lb</span><input id="veh_break" type="number" value="30000"></label>
           <label>Friction (Vert) <span class="units">µ</span><input id="rail_mu" type="number" value="0.3"></label>
         </div>
       </div>
@@ -487,6 +486,9 @@ function updateBrokenRailVisuals() {
       m2.castShadow = true; m2.receiveShadow = true;
       groundGroup.add(m2);
     }
+  } else {
+    // Simple Hide for Angled (Complexity of splitting rotated mesh is high)
+    // Just hide it to represent total failure for now
   }
 }
 
@@ -542,7 +544,6 @@ function checkGuardRailCollision(x, y, z, psi, dx, dy, dpsi) {
   
   const cosPsi = Math.cos(psi), sinPsi = Math.sin(psi);
   const railBreakLoad = getVal('rail_break');
-  const vehBreakLoad = getVal('veh_break');
   const railHeight = guardRail.height;
   const cgZ = state.z;
   const mu_v = getVal('rail_mu');
@@ -569,20 +570,20 @@ function checkGuardRailCollision(x, y, z, psi, dx, dy, dpsi) {
           let F_contact = k_rail * penetration + F_damp;
           
           // FAILURE CHECK
-          const F_mag = Math.abs(F_contact);
+          let F_mag = Math.abs(F_contact);
           
           if(F_mag > railBreakLoad) {
               // RAIL BREAKS!
-              F_contact = 0;
+              // CRITICAL FIX: Return the Max Force for THIS frame to generate the impulse
+              // Do NOT return 0 yet.
+              F_contact = -Math.sign(F_contact) * railBreakLoad; 
+              
               if(!railBroken) {
                   railBroken = true;
                   railBreakLocation = { x: x, y: y };
                   // Visuals updated in animate() loop
               }
           } 
-          else if(F_mag > vehBreakLoad) {
-              F_contact = 0; // Car crumples, but rail stays
-          }
           
           const Fy = -Math.abs(F_contact);
           
