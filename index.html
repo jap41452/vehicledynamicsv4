@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Guard Rail Impact - Shearing Visuals</title>
+<title>Guard Rail Impact - Accel Plots</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -236,16 +236,16 @@ function initChart() {
     data: {
       labels: [],
       datasets: [
-        { label: 'Pitch Rate', borderColor: '#f7931e', ...commonOptions, borderWidth: 3 },
-        { label: 'Vert G', borderColor: '#4a9eff', ...commonOptions, borderWidth: 2 },
-        { label: 'Yaw Rate', borderColor: '#9b59b6', ...commonOptions, borderWidth: 2 }
+        { label: 'X Accel (G)', borderColor: '#e74c3c', ...commonOptions, borderWidth: 2 },
+        { label: 'Y Accel (G)', borderColor: '#3498db', ...commonOptions, borderWidth: 2 },
+        { label: 'Z Accel (G)', borderColor: '#2ecc71', ...commonOptions, borderWidth: 2 }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       scales: {
         x: { display: false },
-        y: { suggestedMin: -2, suggestedMax: 2 }
+        y: { suggestedMin: -2, suggestedMax: 2, title: { display: true, text: 'G-Force' } }
       }
     }
   });
@@ -257,21 +257,21 @@ function updateChartLogic(t) {
   chartUpdateCounter = 0;
   
   const g = getVal('veh_g'); 
-  const pitchRate = state.dtheta * 180/Math.PI;
-  const yawRate = state.dpsi * 180/Math.PI;
-  const vertG = state.ddz / g;
+  const ax = state.ddx / g;
+  const ay = state.ddy / g;
+  const az = state.ddz / g;
   
   const chart = chartInstance;
   chart.data.labels.push(t.toFixed(2));
-  chart.data.datasets[0].data.push(pitchRate);
-  chart.data.datasets[1].data.push(vertG);
-  chart.data.datasets[2].data.push(yawRate);
+  chart.data.datasets[0].data.push(ax);
+  chart.data.datasets[1].data.push(ay);
+  chart.data.datasets[2].data.push(az);
   
   if(chart.data.labels.length > maxDataPoints) {
     chart.data.labels.shift();
     chart.data.datasets.forEach(ds => ds.data.shift());
   }
-  chart.options.plugins.title = { display: true, text: `Pitch: ${pitchRate.toFixed(1)}°/s | Z: ${state.z.toFixed(1)}"` };
+  chart.options.plugins.title = { display: true, text: `Accel (G): X:${ax.toFixed(2)} Y:${ay.toFixed(2)} Z:${az.toFixed(2)}` };
   chart.update();
 }
 
@@ -487,9 +487,6 @@ function updateBrokenRailVisuals() {
       m2.castShadow = true; m2.receiveShadow = true;
       groundGroup.add(m2);
     }
-  } else {
-    // Simple Hide for Angled (Complexity of splitting rotated mesh is high)
-    // Just hide it to represent total failure for now
   }
 }
 
@@ -649,6 +646,7 @@ function getDerivatives(t, s_arr) {
     const k_t = n.startsWith('F') ? getVal('k_tf') : getVal('k_tr');
     const F_tire_z = (pen > 0) ? k_t * pen : 0;
     
+    // Lateral Tire
     const vx_tire = dx - dpsi * wOff.y;
     const F_tire_x = (pen>0) ? -(k_lat * vx_tire * 0.1) : 0; 
     FxBody += F_tire_x;
