@@ -177,11 +177,13 @@ const dt = 1/240; // Smaller timestep for impact stability
 
 const state = {
   x: 0,
+  y: 0,           // NEW: longitudinal position - now dynamic
   z: 40, 
   phi: 0,
   theta: 0,
   psi: 0,
   dx: 0,
+  dy: 0,          // NEW: longitudinal velocity - starts at vehicle speed  
   dz: 0, 
   dphi: 0, 
   dtheta: 0,
@@ -192,6 +194,7 @@ const state = {
   ddphi: 0,
   ddtheta: 0,
   ddx: 0,
+  ddy: 0,         // NEW: for collision deceleration
   ddpsi: 0
 };
 
@@ -303,7 +306,7 @@ function updateChartLogic(t) {
   const toG = (val) => val / g;
   
   const aX = toG(state.ddx);
-  const aY = toG(-getVal('veh_v') * 0); // Y-decel when hitting head-on (TODO: implement)
+  const aY = toG(state.ddy);  // Now using actual deceleration from collision
   const aZ = toG(state.ddz);
   const yawRate = state.dpsi * 180 / Math.PI; // deg/s
   
@@ -320,14 +323,14 @@ function updateChartLogic(t) {
     chart.data.labels.shift();
     chart.data.datasets.forEach(ds => ds.data.shift());
   }
-  chart.options.plugins.title.text = `Impact Dynamics - Time: ${t.toFixed(2)}s | X: ${state.x.toFixed(1)}" | Yaw: ${(state.psi * 180/Math.PI).toFixed(1)}°`;
+  chart.options.plugins.title.text = `Impact Dynamics - Time: ${t.toFixed(2)}s | X: ${state.x.toFixed(1)}" | Y: ${state.y.toFixed(0)}" | Yaw: ${(state.psi * 180/Math.PI).toFixed(1)}°`;
   chart.update();
 }
 
 function packState(s) {
   return [
-    s.x, s.z, s.phi, s.theta, s.psi,
-    s.dx, s.dz, s.dphi, s.dtheta, s.dpsi,
+    s.x, s.y, s.z, s.phi, s.theta, s.psi,
+    s.dx, s.dy, s.dz, s.dphi, s.dtheta, s.dpsi,
     s.zw.FL, s.zw.FR, s.zw.RL, s.zw.RR,
     s.dzw.FL, s.dzw.FR, s.dzw.RL, s.dzw.RR
   ];
@@ -394,12 +397,15 @@ function buildVehicle(isAutoUpdate = false) {
   
   massProps = { M, CG, Ixx, Iyy, Izz };
   
-  // Define vehicle corners (4 corners of box1 in local coords)
+  // Define vehicle corners relative to CG
+  // Chassis center is at c1, corners are ±L1/2, ±W1/2 from chassis center
+  // Corner position in world = c1 + corner_offset_in_chassis
+  // Corner relative to CG = (c1 + offset) - CG
   vehicleCorners = [
-    { name: 'FL', x: -W1/2 - CG.x, y: L1/2 - CG.y },
-    { name: 'FR', x: W1/2 - CG.x, y: L1/2 - CG.y },
-    { name: 'RL', x: -W1/2 - CG.x, y: -L1/2 - CG.y },
-    { name: 'RR', x: W1/2 - CG.x, y: -L1/2 - CG.y }
+    { name: 'FL', x: c1.x - W1/2 - CG.x, y: c1.y + L1/2 - CG.y },
+    { name: 'FR', x: c1.x + W1/2 - CG.x, y: c1.y + L1/2 - CG.y },
+    { name: 'RL', x: c1.x - W1/2 - CG.x, y: c1.y - L1/2 - CG.y },
+    { name: 'RR', x: c1.x + W1/2 - CG.x, y: c1.y - L1/2 - CG.y }
   ];
   
   const b1 = new THREE.Mesh(new THREE.BoxGeometry(W1, L1, H1), new THREE.MeshStandardMaterial({color: 0x2d5f8f}));
@@ -430,11 +436,13 @@ function buildVehicle(isAutoUpdate = false) {
   
   // ALWAYS reset initial conditions when buildVehicle is called
   state.x = 0;
+  state.y = 0;                    // Start at Y=0
   state.z = CG.z + 10; 
   state.phi = 0; 
   state.theta = 0; 
   state.psi = 0;
   state.dx = 0; 
+  state.dy = getVal('veh_v');     // Initialize with forward velocity
   state.dz = 0; 
   state.dphi = 0; 
   state.dtheta = 0; 
@@ -451,6 +459,7 @@ function buildVehicle(isAutoUpdate = false) {
   state.ddphi = 0;
   state.ddtheta = 0;
   state.ddx = 0;
+  state.ddy = 0;
   state.ddpsi = 0;
   
   buildGuardRail();
@@ -557,6 +566,11 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
   const g = getVal('veh_g');
   const railHeight = guardRail.height;
   
+  // DEBUG
+  if(Math.abs(y - guardRail.y) < 50) {
+    console.log(`Y: ${y.toFixed(1)}, Rail Y: ${guardRail.y}, Rail Height: ${railHeight}, Chassis: ${getVal('wheel_D')/2} to ${getVal('wheel_D')/2 + getVal('box1_H')}`);
+  }
+  
   // Critical damping: c = 2 * sqrt(k * m)
   const k_avg = (k_rail + k_bumper) / 2;
   const c_critical = 2 * Math.sqrt(k_avg * massProps.M);
@@ -585,18 +599,23 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
   const chassisBottom = R;
   const chassisTop = R + H1;
   
+  // DEBUG
+  if(Math.abs(y - guardRail.y) < 50) {
+    console.log(`Wheel range: ${wheelBottom}-${wheelTop}, Chassis range: ${chassisBottom}-${chassisTop}`);
+  }
+  
   // Check if rail intersects with wheels (below chassis)
   if(railHeight <= wheelTop && railHeight > wheelBottom) {
     // WHEEL COLLISION - Rail hits wheels
     for(let wOff of wheelOffsets) {
       if(guardRail.type === 'head_on') {
-        // Transform wheel position to world
+        // Transform wheel position to world (include vehicle's Y position)
         const wx_world = x + cosPsi * wOff.x - sinPsi * wOff.y;
         const wy_world = y + sinPsi * wOff.x + cosPsi * wOff.y;
         
         let penetration = wy_world - guardRail.y;
         
-        if(penetration > 0 && penetration < R) {
+        if(penetration > 0 && penetration < R * 2) {
           penetration = Math.min(penetration, MAX_PENETRATION);
           
           // Wheel velocity
@@ -604,8 +623,9 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
           const vy_wheel = dy + dpsi * wOff.x;
           const v_normal = vy_wheel;
           
-          // Contact force
-          const F_spring = k_rail * penetration;
+          // Contact force (use tire stiffness for wheels)
+          const k_tire = getVal('k_tf'); // Use front tire stiffness
+          const F_spring = k_tire * penetration;
           const F_damp = c_critical * v_normal;
           let F_contact = F_spring + F_damp;
           
@@ -620,10 +640,6 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
           const Fy = -Math.abs(F_contact);
           Fy_total += Fy;
           Tz_total += -wOff.x * Fy;
-          
-          // Vertical force component (wheel hops over)
-          const Fz_wheel = F_contact * (railHeight / wheelTop); // Ramp force
-          // This would need to be added to wheel vertical dynamics
         }
       } else {
         // Angled rail - wheel collision
@@ -638,7 +654,7 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
         if(projection >= 0 && projection <= guardRail.length) {
           const perpDist = dx_wheel * guardRail.normalX + dy_wheel * guardRail.normalY;
           
-          if(perpDist < 0 && Math.abs(perpDist) < R) {
+          if(perpDist < 0 && Math.abs(perpDist) < R * 2) {
             let penetration = -perpDist;
             penetration = Math.min(penetration, MAX_PENETRATION);
             
@@ -646,7 +662,8 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
             const vy_wheel = dy + dpsi * wOff.x;
             const v_normal = vx_wheel * guardRail.normalX + vy_wheel * guardRail.normalY;
             
-            const F_spring = k_bumper * penetration;
+            const k_tire = getVal('k_tf');
+            const F_spring = k_tire * penetration;
             const F_damp = c_critical * v_normal;
             let F_contact = F_spring + F_damp;
             
@@ -679,25 +696,26 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
   }
   
   // CHASSIS COLLISION - Rail hits chassis body
-  // Contact points on front and rear edges at rail height
-  // Z-coordinate in local frame (relative to CG)
-  const contactZ_local = railHeight - massProps.CG.z;
+  // Use the vehicle corners that were already correctly calculated relative to CG
+  const contactPoints = vehicleCorners;
   
-  // Define contact points on the vehicle perimeter at rail height
-  const contactPoints = [
-    { name: 'FL', x: -W1/2 - massProps.CG.x, y: L1/2 - massProps.CG.y, z: contactZ_local },
-    { name: 'FR', x: W1/2 - massProps.CG.x, y: L1/2 - massProps.CG.y, z: contactZ_local },
-    { name: 'RL', x: -W1/2 - massProps.CG.x, y: -L1/2 - massProps.CG.y, z: contactZ_local },
-    { name: 'RR', x: W1/2 - massProps.CG.x, y: -L1/2 - massProps.CG.y, z: contactZ_local }
-  ];
+  // DEBUG
+  if(Math.abs(y - guardRail.y) < 50) {
+    console.log(`Chassis collision check: contactPoints=${contactPoints ? contactPoints.length : 'NULL'}`);
+  }
   
   if(guardRail.type === 'head_on') {
     for(let pt of contactPoints) {
-      // Transform contact point to world coordinates
+      // Transform contact point (CG-relative) to world coordinates
       const cx_world = x + cosPsi * pt.x - sinPsi * pt.y;
       const cy_world = y + sinPsi * pt.x + cosPsi * pt.y;
       
       let penetration = cy_world - guardRail.y;
+      
+      // DEBUG
+      if(Math.abs(y - guardRail.y) < 50) {
+        console.log(`Contact ${pt.name}: cy_world=${cy_world.toFixed(1)}, penetration=${penetration.toFixed(1)}`);
+      }
       
       if(penetration > 0) {
         // Limit penetration
@@ -733,6 +751,11 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
         const Fy = -Math.abs(F_contact);
         
         Fy_total += Fy;
+        
+        // DEBUG
+        if(Math.abs(y - guardRail.y) < 50 && Math.abs(Fy) > 0.1) {
+          console.log(`FORCE APPLIED: Fy=${Fy.toFixed(1)} lb, F_contact=${F_contact.toFixed(1)}, penetration=${penetration.toFixed(2)}`);
+        }
         
         // Moment from force at contact point (including Z component)
         // T = r × F
@@ -806,12 +829,12 @@ function checkGuardRailCollision(x, y, psi, dx, dy, dpsi) {
 }
 
 function getDerivatives(t, s_arr) {
-  if(!massProps || !wheelOffsets) return Array(18).fill(0);
+  if(!massProps || !wheelOffsets) return Array(20).fill(0);
   
-  const x=s_arr[0], z=s_arr[1], phi=s_arr[2], theta=s_arr[3], psi=s_arr[4];
-  const dx=s_arr[5], dz=s_arr[6], dphi=s_arr[7], dtheta=s_arr[8], dpsi=s_arr[9];
+  const x=s_arr[0], y=s_arr[1], z=s_arr[2], phi=s_arr[3], theta=s_arr[4], psi=s_arr[5];
+  const dx=s_arr[6], dy=s_arr[7], dz=s_arr[8], dphi=s_arr[9], dtheta=s_arr[10], dpsi=s_arr[11];
   
-  const v = getVal('veh_v');
+  const veh_speed = getVal('veh_v');
   const g = getVal('veh_g');
   const wm = getVal('wheel_Wt') / g;
   
@@ -826,7 +849,7 @@ function getDerivatives(t, s_arr) {
   // Wheel forces (vertical and lateral)
   names.forEach((n, i) => {
     const wOff = wheelOffsets[i];
-    const zw = s_arr[10+i];
+    const zw = s_arr[12+i];
     
     const zb = z - phi*wOff.x + theta*wOff.y;
     const dzb = dz - dphi*wOff.x + dtheta*wOff.y;
@@ -835,7 +858,7 @@ function getDerivatives(t, s_arr) {
     const c_s = n.startsWith('F') ? getVal('c_sf') : getVal('c_sr');
     const freeLen = 25; 
     const comp = freeLen - (zb - zw);
-    const dcomp = -(dzb - s_arr[14+i]);
+    const dcomp = -(dzb - s_arr[16+i]);
     const F_susp = Math.max(0, k_s * comp + c_s * dcomp);
     FzBody += F_susp;
     Tx += F_susp * wOff.y;
@@ -843,7 +866,7 @@ function getDerivatives(t, s_arr) {
     
     const cosPsi = Math.cos(psi), sinPsi = Math.sin(psi);
     const wx_world = x + cosPsi * wOff.x - sinPsi * wOff.y;
-    const wy_world = v * t + sinPsi * wOff.x + cosPsi * wOff.y;
+    const wy_world = y + sinPsi * wOff.x + cosPsi * wOff.y;
     
     // Flat ground (no road features)
     const roadZ = 0;
@@ -862,8 +885,8 @@ function getDerivatives(t, s_arr) {
     ddzw[i] = (F_tire_z - F_susp - wm*g) / wm;
   });
   
-  // Guard rail collision forces
-  const railForces = checkGuardRailCollision(x, v*t, psi, dx, 0, dpsi);
+  // Guard rail collision forces - use actual Y position from state
+  const railForces = checkGuardRailCollision(x, y, psi, dx, dy, dpsi);
   FxBody += railForces.Fx;
   FyBody += railForces.Fy;
   Tz += railForces.Tz;
@@ -876,9 +899,9 @@ function getDerivatives(t, s_arr) {
   const ddpsi = Tz / massProps.Izz;
   
   return [ 
-    dx, dz, dphi, dtheta, dpsi,
-    ddx, ddz, ddphi, ddtheta, ddpsi,
-    s_arr[14], s_arr[15], s_arr[16], s_arr[17],
+    dx, dy, dz, dphi, dtheta, dpsi,
+    ddx, ddy, ddz, ddphi, ddtheta, ddpsi,
+    s_arr[16], s_arr[17], s_arr[18], s_arr[19],
     ddzw[0], ddzw[1], ddzw[2], ddzw[3]
   ];
 }
@@ -895,16 +918,17 @@ function stepRK4(dt) {
   const k4 = getDerivatives(t+dt, s4);
   const fin = s.map((v,i) => v + (dt/6)*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i]));
   
-  state.x=fin[0]; state.z=fin[1]; state.phi=fin[2]; state.theta=fin[3]; state.psi=fin[4];
-  state.dx=fin[5]; state.dz=fin[6]; state.dphi=fin[7]; state.dtheta=fin[8]; state.dpsi=fin[9];
-  state.zw.FL=fin[10]; state.zw.FR=fin[11]; state.zw.RL=fin[12]; state.zw.RR=fin[13];
-  state.dzw.FL=fin[14]; state.dzw.FR=fin[15]; state.dzw.RL=fin[16]; state.dzw.RR=fin[17];
+  state.x=fin[0]; state.y=fin[1]; state.z=fin[2]; state.phi=fin[3]; state.theta=fin[4]; state.psi=fin[5];
+  state.dx=fin[6]; state.dy=fin[7]; state.dz=fin[8]; state.dphi=fin[9]; state.dtheta=fin[10]; state.dpsi=fin[11];
+  state.zw.FL=fin[12]; state.zw.FR=fin[13]; state.zw.RL=fin[14]; state.zw.RR=fin[15];
+  state.dzw.FL=fin[16]; state.dzw.FR=fin[17]; state.dzw.RL=fin[18]; state.dzw.RR=fin[19];
   
-  state.ddx = k1[5];
-  state.ddz = k1[6]; 
-  state.ddphi = k1[7];
-  state.ddtheta = k1[8];
-  state.ddpsi = k1[9];
+  state.ddx = k1[6];
+  state.ddy = k1[7];
+  state.ddz = k1[8]; 
+  state.ddphi = k1[9];
+  state.ddtheta = k1[10];
+  state.ddpsi = k1[11];
   
   simTime += dt;
 }
@@ -920,8 +944,8 @@ function animate() {
   vehicleGroup.position.set(state.x, 0, state.z);
   vehicleGroup.rotation.set(state.theta, state.phi, state.psi);
   
-  const dist = getVal('veh_v') * simTime;
-  groundGroup.position.y = -dist;
+  // Ground moves relative to vehicle's Y position
+  groundGroup.position.y = -state.y;
   
   if(wheelOffsets) {
     const names = ['FL','FR','RL','RR'];
