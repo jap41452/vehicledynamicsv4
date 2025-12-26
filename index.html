@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Guard Rail Impact - Tire Presets</title>
+<title>Guard Rail Impact - Unified + Tire Presets</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -44,7 +44,7 @@
     <div id="ui">
       <div style="background: #fff3e0; padding: 10px; border-radius: 4px; margin-bottom: 15px; border: 2px solid #ff6b35;">
         <div style="font-size: 14px; font-weight: bold; color: #d84315;">Guard Rail Impact Module</div>
-        <div style="font-size: 10px; color: #d84315; margin-top: 4px;">Dynamic Breakage + Tire Presets</div>
+        <div style="font-size: 10px; color: #d84315; margin-top: 4px;">Unified Angled Rail + Dynamic Breakage</div>
       </div>
       
       <div class="auto-update-group">
@@ -75,19 +75,15 @@
       <div class="impact-section">
         <h3>Guard Rail Configuration <span class="impact-badge">IMPACT</span></h3>
         <div class="grid2">
-          <label style="grid-column: 1 / span 2;">Rail Type
-            <select id="rail_type">
-              <option value="head_on">Head-On (Full Width)</option>
-              <option value="left_corner">Left Corner (Angled)</option>
-              <option value="right_corner">Right Corner (Angled)</option>
-            </select>
-          </label>
-          <label>Location Y <span class="units">in</span><input id="rail_y" type="number" value="300"></label>
+          <label>Center Y <span class="units">in</span><input id="rail_y" type="number" value="300"></label>
           <label>Angle <span class="units">deg</span><input id="rail_angle" type="number" value="0" min="-60" max="60"></label>
           <label>Height <span class="units">in</span><input id="rail_height" type="number" value="18" min="6" max="72"></label>
           <label style="background: #ffe0b2; padding: 4px; border-radius: 3px;">
             CG Height: <span id="cg_height_display" style="font-weight: bold; color: #d84315;">--</span> <span class="units">in</span>
           </label>
+        </div>
+        <div style="font-size: 10px; color: #d84315; margin-top: 6px; line-height: 1.4;">
+          Angle 0° = Perpendicular Wall. Positive = Rotated Left (Driver Side Hit).
         </div>
       </div>
       
@@ -314,7 +310,6 @@ function setupAutoUpdate() {
   const inputs = document.querySelectorAll('.auto-update-group input');
   inputs.forEach(input => {
     input.addEventListener('input', () => { 
-        // If user manually changes K or C, set preset to custom
         if(input.id === 'k_lat' || input.id === 'c_lat') {
             document.getElementById('tire_preset').value = 'custom';
         }
@@ -331,7 +326,6 @@ function setupAutoUpdate() {
       }
   });
   
-  document.getElementById('rail_type').addEventListener('change', buildGuardRail);
   document.getElementById('rail_y').addEventListener('input', buildGuardRail);
   document.getElementById('rail_angle').addEventListener('input', buildGuardRail);
   document.getElementById('rail_height').addEventListener('input', buildGuardRail);
@@ -434,201 +428,132 @@ function buildVehicle(isAutoUpdate = false) {
 function buildGuardRail() {
   if(guardRail && guardRail.mesh) { groundGroup.remove(guardRail.mesh); }
   
-  const type = document.getElementById('rail_type').value;
   const railY = getVal('rail_y');
   const angleDeg = getVal('rail_angle');
   const angleRad = angleDeg * Math.PI / 180;
   const railHeight = getVal('rail_height');
   const W = getVal('box1_W');
   
-  const width = W * 3; 
-  const thickness = 12; // Standard thickness for both
+  const width = 1000; // Always wide enough to cover path
+  const thickness = 12;
   
-  if(type === 'head_on') {
-    const geom = new THREE.BoxGeometry(width, thickness, railHeight);
-    const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: 0xff6b35, metalness: 0.7, roughness: 0.3 }));
-    mesh.position.set(0, railY, railHeight/2);
-    mesh.castShadow = true; mesh.receiveShadow = true;
-    groundGroup.add(mesh);
-    
-    guardRail = { type: 'head_on', mesh: mesh, y: railY, height: railHeight, width: width, thickness: thickness, normal: { x: 0, y: -1 } };
-  } else {
-    // Angled logic
-    const isLeft = (type === 'left_corner');
-    const xStart = isLeft ? -W*0.6 : W*0.6;
-    const railLength = 400;
-    const xEnd = xStart + railLength * Math.sin(angleRad) * (isLeft ? -1 : 1);
-    const yEnd = railY + railLength * Math.cos(angleRad);
-    
-    const geom = new THREE.BoxGeometry(thickness, railLength, railHeight);
-    const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: 0xff6b35, metalness: 0.7, roughness: 0.3 }));
-    
-    const midX = (xStart + xEnd) / 2;
-    const midY = (railY + yEnd) / 2;
-    mesh.position.set(midX, midY, railHeight/2);
-    mesh.rotation.z = angleRad * (isLeft ? 1 : -1);
-    mesh.castShadow = true; mesh.receiveShadow = true;
-    groundGroup.add(mesh);
-    
-    const dx = xEnd - xStart;
-    const dy = yEnd - railY;
-    const length = Math.sqrt(dx*dx + dy*dy);
-    const dirX = dx / length;
-    const dirY = dy / length;
-    const normalX = -dirY * (isLeft ? -1 : 1);
-    const normalY = dirX * (isLeft ? -1 : 1);
-    
-    guardRail = { 
-        type: 'angled', mesh: mesh, 
-        x1: xStart, y1: railY, x2: xEnd, y2: yEnd, 
-        height: railHeight, thickness: thickness,
-        dirX: dirX, dirY: dirY, 
-        normalX: normalX, normalY: normalY, 
-        length: length,
-        midX: midX, midY: midY, rotation: mesh.rotation.z
-    };
-  }
+  const geom = new THREE.BoxGeometry(width, thickness, railHeight);
+  const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: 0xff6b35, metalness: 0.7, roughness: 0.3 }));
+  
+  mesh.position.set(0, railY, railHeight/2);
+  mesh.rotation.z = angleRad; // Rotate around center (0, railY)
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  groundGroup.add(mesh);
+  
+  // Pre-calculate Normal Vector based on angle
+  // Normal vector rotates with the mesh. 0 deg = (0, -1)
+  const nx = Math.sin(angleRad);
+  const ny = -Math.cos(angleRad);
+  
+  // Direction vector (along the rail)
+  const dx = Math.cos(angleRad);
+  const dy = Math.sin(angleRad);
+  
+  guardRail = { 
+      mesh: mesh, y: railY, height: railHeight, width: width, thickness: thickness, 
+      normalX: nx, normalY: ny,
+      dirX: dx, dirY: dy,
+      angle: angleRad
+  };
 }
 
-// VISUAL UPDATE: Triggered when rail breaks
 function updateBrokenRailVisuals() {
   if(!guardRail || !guardRail.mesh) return;
   
-  const breakW = getVal('box1_W') * 1.2; // 120% gap
+  const breakW = getVal('box1_W') * 1.2; 
   const bx = railBreakLocation.x;
   const by = railBreakLocation.y;
   
-  groundGroup.remove(guardRail.mesh); // Remove original
+  groundGroup.remove(guardRail.mesh); 
   
   const mat = new THREE.MeshStandardMaterial({ color: 0xff6b35, metalness: 0.7, roughness: 0.3 });
   
-  if(guardRail.type === 'head_on') {
-    // Split Head-On Rail
-    const totalW = guardRail.width;
-    const railY = guardRail.y;
-    const leftBound = -totalW/2;
-    const rightBound = totalW/2;
-    
-    const gapLeft = bx - breakW/2;
-    const gapRight = bx + breakW/2;
-    
-    if(gapLeft > leftBound) {
-      const w1 = gapLeft - leftBound;
-      const c1 = leftBound + w1/2;
-      const m1 = new THREE.Mesh(new THREE.BoxGeometry(w1, guardRail.thickness, guardRail.height), mat);
-      m1.position.set(c1, railY, guardRail.height/2);
+  // Find break pos in Local X
+  const dx = bx - 0;
+  const dy = by - guardRail.y;
+  const localPos = dx * guardRail.dirX + dy * guardRail.dirY;
+  
+  const halfW = guardRail.width / 2;
+  const leftBound = -halfW;
+  const rightBound = halfW;
+  
+  const gapStart = localPos - breakW/2;
+  const gapEnd = localPos + breakW/2;
+  
+  if(gapStart > leftBound) {
+      const len1 = gapStart - leftBound;
+      const centerLocal1 = leftBound + len1/2;
+      const m1 = new THREE.Mesh(new THREE.BoxGeometry(len1, guardRail.thickness, guardRail.height), mat);
+      
+      const wx1 = 0 + centerLocal1 * guardRail.dirX;
+      const wy1 = guardRail.y + centerLocal1 * guardRail.dirY;
+      
+      m1.position.set(wx1, wy1, guardRail.height/2);
+      m1.rotation.z = guardRail.angle;
       groundGroup.add(m1);
-      brokenRailMeshes.push(m1); 
-    }
-    
-    if(gapRight < rightBound) {
-      const w2 = rightBound - gapRight;
-      const c2 = gapRight + w2/2;
-      const m2 = new THREE.Mesh(new THREE.BoxGeometry(w2, guardRail.thickness, guardRail.height), mat);
-      m2.position.set(c2, railY, guardRail.height/2);
+      brokenRailMeshes.push(m1);
+  }
+  
+  if(gapEnd < rightBound) {
+      const len2 = rightBound - gapEnd;
+      const centerLocal2 = gapEnd + len2/2;
+      const m2 = new THREE.Mesh(new THREE.BoxGeometry(len2, guardRail.thickness, guardRail.height), mat);
+      
+      const wx2 = 0 + centerLocal2 * guardRail.dirX;
+      const wy2 = guardRail.y + centerLocal2 * guardRail.dirY;
+      
+      m2.position.set(wx2, wy2, guardRail.height/2);
+      m2.rotation.z = guardRail.angle;
       groundGroup.add(m2);
-      brokenRailMeshes.push(m2); 
-    }
-  } else {
-    // Split Angled Rail
-    const dx = bx - guardRail.x1;
-    const dy = by - guardRail.y1;
-    const t_break = dx * guardRail.dirX + dy * guardRail.dirY; 
-    
-    const gapStartT = t_break - breakW/2;
-    const gapEndT = t_break + breakW/2;
-    
-    const totalLen = guardRail.length;
-    
-    // Segment 1
-    if(gapStartT > 0) {
-        const len1 = gapStartT;
-        const midT1 = len1 / 2;
-        const midX1 = guardRail.x1 + midT1 * guardRail.dirX;
-        const midY1 = guardRail.y1 + midT1 * guardRail.dirY;
-        
-        const m1 = new THREE.Mesh(new THREE.BoxGeometry(guardRail.thickness, len1, guardRail.height), mat);
-        m1.position.set(midX1, midY1, guardRail.height/2);
-        m1.rotation.z = guardRail.rotation;
-        groundGroup.add(m1);
-        brokenRailMeshes.push(m1);
-    }
-    
-    // Segment 2
-    if(gapEndT < totalLen) {
-        const len2 = totalLen - gapEndT;
-        const midT2 = gapEndT + len2 / 2;
-        const midX2 = guardRail.x1 + midT2 * guardRail.dirX;
-        const midY2 = guardRail.y1 + midT2 * guardRail.dirY;
-        
-        const m2 = new THREE.Mesh(new THREE.BoxGeometry(guardRail.thickness, len2, guardRail.height), mat);
-        m2.position.set(midX2, midY2, guardRail.height/2);
-        m2.rotation.z = guardRail.rotation;
-        groundGroup.add(m2);
-        brokenRailMeshes.push(m2);
-    }
+      brokenRailMeshes.push(m2);
   }
 }
 
-// HELPER: Get effective ground Z for a tire (checks rail overlap)
 function getRailHeightAt(x, y) {
   if(!guardRail) return 0;
   
-  if(railBroken) {
-    const gapWidth = getVal('box1_W') * 1.1;
-    if(guardRail.type === 'head_on') {
-        if(Math.abs(x - railBreakLocation.x) < gapWidth/2) return 0; 
-    } else {
-        const dx = x - guardRail.x1;
-        const dy = y - guardRail.y1;
-        const t = dx * guardRail.dirX + dy * guardRail.dirY;
-        
-        const dbx = railBreakLocation.x - guardRail.x1;
-        const dby = railBreakLocation.y - guardRail.y1;
-        const t_break = dbx * guardRail.dirX + dby * guardRail.dirY;
-        
-        if(Math.abs(t - t_break) < gapWidth/2) return 0;
-    }
-  }
+  const dx = x - 0;
+  const dy = y - guardRail.y;
+  const localX = dx * guardRail.dirX + dy * guardRail.dirY;
+  const perpDist = dx * guardRail.normalX + dy * guardRail.normalY;
   
-  if(guardRail.type === 'head_on') {
-    const W_rail = guardRail.width; 
-    const railY = guardRail.y;
-    const halfThick = 6; 
-    
-    if (Math.abs(y - railY) < halfThick && Math.abs(x) < W_rail/2) {
+  const halfThick = guardRail.thickness / 2;
+  const halfWidth = guardRail.width / 2;
+  
+  if (Math.abs(perpDist) < halfThick && Math.abs(localX) < halfWidth) {
+      if(railBroken) {
+          const breakDx = railBreakLocation.x - 0;
+          const breakDy = railBreakLocation.y - guardRail.y;
+          const breakLocalX = breakDx * guardRail.dirX + breakDy * guardRail.dirY;
+          
+          const gapW = getVal('box1_W') * 1.2;
+          if(Math.abs(localX - breakLocalX) < gapW/2) return 0; 
+      }
       return guardRail.height;
-    }
-  } else {
-    const dx = x - guardRail.x1;
-    const dy = y - guardRail.y1;
-    const proj = dx * guardRail.dirX + dy * guardRail.dirY;
-    if(proj >= 0 && proj <= guardRail.length) {
-      const perpDist = dx * guardRail.normalX + dy * guardRail.normalY;
-      if(Math.abs(perpDist) < 4) return guardRail.height;
-    }
   }
   return 0;
 }
 
-// Calculate collision with MOMENTS (for CHASSIS only)
 function checkGuardRailCollision(x, y, z, psi, dx, dy, dpsi) {
   if(!guardRail || !vehicleCorners || !massProps || !wheelOffsets) return { Fx: 0, Fy: 0, Fz: 0, Tx: 0, Ty: 0, Tz: 0 };
   
   if(railBroken) {
-      const gapWidth = getVal('box1_W') * 1.1;
-      if(guardRail.type === 'head_on') {
-          if(Math.abs(x - railBreakLocation.x) < gapWidth/2) return { Fx: 0, Fy: 0, Fz: 0, Tx: 0, Ty: 0, Tz: 0 };
-      } else {
-          const dx_pt = x - guardRail.x1;
-          const dy_pt = y - guardRail.y1;
-          const t = dx_pt * guardRail.dirX + dy_pt * guardRail.dirY;
-          
-          const dbx = railBreakLocation.x - guardRail.x1;
-          const dby = railBreakLocation.y - guardRail.y1;
-          const t_break = dbx * guardRail.dirX + dby * guardRail.dirY;
-          
-          if(Math.abs(t - t_break) < gapWidth/2) return { Fx: 0, Fy: 0, Fz: 0, Tx: 0, Ty: 0, Tz: 0 };
+      const dx_cg = x - 0;
+      const dy_cg = y - guardRail.y;
+      const localX = dx_cg * guardRail.dirX + dy_cg * guardRail.dirY;
+      
+      const bdx = railBreakLocation.x - 0;
+      const bdy = railBreakLocation.y - guardRail.y;
+      const breakLocalX = bdx * guardRail.dirX + bdy * guardRail.dirY;
+      
+      const gapW = getVal('box1_W') * 1.1;
+      if(Math.abs(localX - breakLocalX) < gapW/2) {
+          return { Fx: 0, Fy: 0, Fz: 0, Tx: 0, Ty: 0, Tz: 0 };
       }
   }
   
@@ -657,77 +582,54 @@ function checkGuardRailCollision(x, y, z, psi, dx, dy, dpsi) {
         const cx_world = x + cosPsi * pt.x - sinPsi * pt.y;
         const cy_world = y + sinPsi * pt.x + cosPsi * pt.y;
         
-        let penetration = 0;
-        let v_normal = 0;
-        let normalX = 0; 
-        let normalY = 0;
+        // Plane Distance Logic
+        const pdx = cx_world - 0;
+        const pdy = cy_world - guardRail.y;
+        const dist = pdx * guardRail.normalX + pdy * guardRail.normalY;
+        const localX = pdx * guardRail.dirX + pdy * guardRail.dirY;
         
-        if(guardRail.type === 'head_on') {
-            penetration = cy_world - guardRail.y;
-            normalX = 0; normalY = -1;
+        // dist < 0 means car has crossed the face defined by Normal
+        if(dist < 0 && Math.abs(localX) < guardRail.width/2) {
+            let penetration = -dist;
+            penetration = Math.min(penetration, MAX_PENETRATION);
             
-            if(Math.abs(cx_world) > guardRail.width/2) penetration = -1; 
+            const vx_pt = dx - dpsi * pt.y;
+            const vy_pt = dy + dpsi * pt.x;
+            const v_normal = -(vx_pt * guardRail.normalX + vy_pt * guardRail.normalY);
             
-            const vy_pt = dy + dpsi * pt.x; 
-            v_normal = vy_pt; 
+            const F_damp = c_critical * v_normal * Math.min(penetration/2, 1.0);
+            let F_contact = k_rail * penetration + F_damp;
             
-        } else {
-            const dx_pt = cx_world - guardRail.x1;
-            const dy_pt = cy_world - guardRail.y1;
-            const proj = dx_pt * guardRail.dirX + dy_pt * guardRail.dirY;
+            let F_mag = Math.abs(F_contact);
             
-            if(proj >= 0 && proj <= guardRail.length) {
-                const perpDist = dx_pt * guardRail.normalX + dy_pt * guardRail.normalY;
-                if(perpDist < 0) {
-                    penetration = -perpDist;
-                    normalX = guardRail.normalX;
-                    normalY = guardRail.normalY;
-                    
-                    const vx_pt = dx - dpsi * pt.y;
-                    const vy_pt = dy + dpsi * pt.x;
-                    v_normal = -(vx_pt * normalX + vy_pt * normalY); 
+            if(F_mag > railBreakLoad) {
+                F_contact = railBreakLoad; // Impulse
+                if(!railBroken) {
+                    railBroken = true;
+                    railBreakLocation = { x: x, y: y }; 
                 }
-            }
-        }
-        
-        if(penetration > 0) {
-          penetration = Math.min(penetration, MAX_PENETRATION);
-          
-          const F_damp = c_critical * v_normal * Math.min(penetration/2, 1.0);
-          let F_contact = k_rail * penetration + F_damp;
-          
-          let F_mag = Math.abs(F_contact);
-          
-          if(F_mag > railBreakLoad) {
-              F_contact = railBreakLoad; // Impulse
-              if(!railBroken) {
-                  railBroken = true;
-                  railBreakLocation = { x: x, y: y }; 
-              }
-          } 
-          
-          const F_applied = Math.abs(F_contact); 
-          
-          const Fx = F_applied * normalX;
-          const Fy = F_applied * normalY;
-          
-          Fx_total += Fx;
-          Fy_total += Fy;
-          
-          Tz_total += pt.x * Fy - pt.y * Fx; 
-          
-          const armX = cx_world - x;
-          const armY = cy_world - y;
-          Tz_total += armX * Fy - armY * Fx;
-          
-          const z_contact = Math.min(railHeight, chassisTop);
-          const dz = z_contact - cgZ; 
-          
-          Tx_total -= dz * Fy;
-          Ty_total += dz * Fx;
-          
-          const Fz_fric = -Math.sign(state.dz) * F_applied * mu_v;
-          Fz_total += Fz_fric;
+            } 
+            
+            const F_applied = Math.abs(F_contact); 
+            
+            const Fx = F_applied * guardRail.normalX;
+            const Fy = F_applied * guardRail.normalY;
+            
+            Fx_total += Fx;
+            Fy_total += Fy;
+            
+            const armX = cx_world - x;
+            const armY = cy_world - y;
+            Tz_total += armX * Fy - armY * Fx;
+            
+            const z_contact = Math.min(railHeight, chassisTop);
+            const dz = z_contact - cgZ; 
+            
+            Tx_total -= dz * Fy;
+            Ty_total += dz * Fx;
+            
+            const Fz_fric = -Math.sign(state.dz) * F_applied * mu_v;
+            Fz_total += Fz_fric;
         }
     }
   }
