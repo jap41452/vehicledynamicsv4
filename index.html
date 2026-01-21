@@ -134,13 +134,26 @@
         <label>Time Scale <span class="units">x</span><input id="time_scale" type="number" value="1.0" step="0.1" min="0.1" max="10"></label>
       </div>
 
-      <div class="grid2" style="margin-top:10px;">
-        <button id="solveBtn">▶ Solve</button>
-        <button id="stopBtn">■ Stop</button>
-      </div>
-      <button id="updateBtn">Reset / Rebuild Scene</button>
-    </div>
-    <div id="viewer"></div>
+   <div class="grid2" style="margin-top:10px;">
+  <button id="solveBtn">▶ Solve</button>
+  <button id="stopBtn">■ Stop</button>
+</div>
+<button id="updateBtn">Reset / Rebuild Scene</button>
+
+<!-- ADD THESE THREE BUTTONS HERE -->
+<div style="margin-top:10px;">
+  <button id="exportJsonBtn" style="background: #fff3cd; border-color: #ffc107; color: #856404;">💾 Export JSON</button>
+  <button id="importJsonBtn" style="background: #d1ecf1; border-color: #bee5eb; color: #0c5460;">📂 Import JSON</button>
+  <button id="exportCsvBtn" style="background: #d4edda; border-color: #c3e6cb; color: #155724;">📊 Export CSV</button>
+</div>
+<!-- END OF NEW BUTTONS -->
+
+
+
+ </div>
+   
+
+ <div id="viewer"></div>
   </div>
   <div id="chart-container">
     <canvas id="accelChart"></canvas>
@@ -763,6 +776,218 @@ function animate() {
   controls.update();
   renderer.render(scene, camera);
 }
+
+// ==================== EXPORT/IMPORT FUNCTIONS ====================
+
+// Helper function to get formatted timestamp
+function getTimestamp() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
+// 1. EXPORT JSON BUTTON
+document.getElementById('exportJsonBtn').onclick = () => {
+  const data = {
+    timestamp: new Date().toISOString(),
+    moduleType: 'guardrail_impact',
+    box1: {
+      length: getVal('box1_L'),
+      width: getVal('box1_W'),
+      height: getVal('box1_H'),
+      weight: getVal('box1_Wt')
+    },
+    box2: {
+      length: getVal('box2_L'),
+      width: getVal('box2_W'),
+      height: getVal('box2_H'),
+      weight: getVal('box2_Wt'),
+      frontOffset: getVal('box2_dY')
+    },
+    wheels: {
+      diameter: getVal('wheel_D'),
+      weight: getVal('wheel_Wt'),
+      frontY: getVal('wheel_Yf'),
+      rearSpacing: getVal('wheel_dYr')
+    },
+    guardRail: {
+      centerY: getVal('rail_y'),
+      angle: getVal('rail_angle'),
+      height: getVal('rail_height')
+    },
+    contact: {
+      railStiffness: getVal('k_rail'),
+      bumperStiffness: getVal('k_bumper'),
+      railBreakLoad: getVal('rail_break'),
+      frictionVert: getVal('rail_mu')
+    },
+    lateralDynamics: {
+      tirePreset: document.getElementById('tire_preset').value,
+      lateralK: getVal('k_lat'),
+      lateralC: getVal('c_lat')
+    },
+    suspension: {
+      frontK: getVal('k_sf'),
+      frontC: getVal('c_sf'),
+      rearK: getVal('k_sr'),
+      rearC: getVal('c_sr')
+    },
+    tires: {
+      frontK: getVal('k_tf'),
+      rearK: getVal('k_tr')
+    },
+    simulation: {
+      speed: getVal('veh_v'),
+      gravity: getVal('veh_g'),
+      timeScale: getVal('time_scale')
+    }
+  };
+  
+  const jsonStr = JSON.stringify(data, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `guardrail_impact_${getTimestamp()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+// 2. IMPORT JSON BUTTON
+document.getElementById('importJsonBtn').onclick = () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        
+        // Box 1
+        if (data.box1) {
+          setVal('box1_L', data.box1.length);
+          setVal('box1_W', data.box1.width);
+          setVal('box1_H', data.box1.height);
+          setVal('box1_Wt', data.box1.weight);
+        }
+        
+        // Box 2
+        if (data.box2) {
+          setVal('box2_L', data.box2.length);
+          setVal('box2_W', data.box2.width);
+          setVal('box2_H', data.box2.height);
+          setVal('box2_Wt', data.box2.weight);
+          setVal('box2_dY', data.box2.frontOffset);
+        }
+        
+        // Wheels
+        if (data.wheels) {
+          setVal('wheel_D', data.wheels.diameter);
+          setVal('wheel_Wt', data.wheels.weight);
+          setVal('wheel_Yf', data.wheels.frontY);
+          setVal('wheel_dYr', data.wheels.rearSpacing);
+        }
+        
+        // Guard Rail
+        if (data.guardRail) {
+          setVal('rail_y', data.guardRail.centerY);
+          setVal('rail_angle', data.guardRail.angle);
+          setVal('rail_height', data.guardRail.height);
+        }
+        
+        // Contact Parameters
+        if (data.contact) {
+          setVal('k_rail', data.contact.railStiffness);
+          setVal('k_bumper', data.contact.bumperStiffness);
+          setVal('rail_break', data.contact.railBreakLoad);
+          setVal('rail_mu', data.contact.frictionVert);
+        }
+        
+        // Lateral Dynamics
+        if (data.lateralDynamics) {
+          document.getElementById('tire_preset').value = data.lateralDynamics.tirePreset || 'custom';
+          setVal('k_lat', data.lateralDynamics.lateralK);
+          setVal('c_lat', data.lateralDynamics.lateralC);
+        }
+        
+        // Suspension
+        if (data.suspension) {
+          setVal('k_sf', data.suspension.frontK);
+          setVal('c_sf', data.suspension.frontC);
+          setVal('k_sr', data.suspension.rearK);
+          setVal('c_sr', data.suspension.rearC);
+        }
+        
+        // Tires
+        if (data.tires) {
+          setVal('k_tf', data.tires.frontK);
+          setVal('k_tr', data.tires.rearK);
+        }
+        
+        // Simulation
+        if (data.simulation) {
+          setVal('veh_v', data.simulation.speed);
+          setVal('veh_g', data.simulation.gravity);
+          setVal('time_scale', data.simulation.timeScale);
+        }
+        
+        // Rebuild vehicle with new parameters
+        buildVehicle(false);
+        
+        alert('Configuration loaded successfully!');
+      } catch (err) {
+        alert('Error loading JSON file: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+};
+
+// 3. EXPORT CSV BUTTON
+document.getElementById('exportCsvBtn').onclick = () => {
+  if (!chartInstance || chartInstance.data.labels.length === 0) {
+    alert('No data to export. Run a simulation first.');
+    return;
+  }
+  
+  const labels = chartInstance.data.labels;
+  const datasets = chartInstance.data.datasets;
+  
+  // Create CSV header
+  let csv = 'Time (s),X Accel (G),Y Accel (G),Z Accel (G)\n';
+  
+  // Add data rows
+  for (let i = 0; i < labels.length; i++) {
+    const row = [
+      labels[i],
+      datasets[0].data[i].toFixed(4),
+      datasets[1].data[i].toFixed(4),
+      datasets[2].data[i].toFixed(4)
+    ].join(',');
+    csv += row + '\n';
+  }
+  
+  // Download CSV
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `guardrail_impact_accel_${getTimestamp()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 </script>
 </body>
 </html>
+
